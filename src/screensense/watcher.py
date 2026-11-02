@@ -31,8 +31,9 @@ PACES = {"calm": 30.0, "normal": 15.0, "dense": 8.0, "live": 4.0}
 
 class Watcher:
     def __init__(self, source: str = "desktop", pace: str | float = "normal", fps: float = 8,
-                 width: int = 640, height: int = 360, min_frames: int = 1, max_frames: int = 8,
-                 sheet_width: int = 800, backend: str | None = None, realtime: bool = True,
+                 width: int = 1280, height: int = 720, min_frames: int = 1, max_frames: int = 8,
+                 sheet_width: int = 800, peek_width: int = 1280, backend: str | None = None,
+                 realtime: bool = True,
                  title_fn: Callable[[], str | None] | None = None,
                  allow_fn: Callable[[str | None], bool] | None = None,
                  folder: str | Path | None = None, keep: int = 20,
@@ -41,6 +42,7 @@ class Watcher:
         self.source, self.fps, self.width, self.height = source, fps, width, height
         self.backend, self.realtime = backend, realtime
         self.min_frames, self.max_frames, self.sheet_width = min_frames, max_frames, sheet_width
+        self.peek_width = peek_width          # 叫她看的單張要讀得到字，比拼板大
         self.title_fn = title_fn              # 取得前景視窗標題（寫進拼板說明）
         self.allow_fn = allow_fn              # 回傳 False 的畫面不收（例如銀行、密碼視窗）
         self.on_sheet = on_sheet
@@ -122,7 +124,7 @@ class Watcher:
             fr = self._latest
         if fr is None:
             return None
-        return build_sheet([fr], self.sheet_width, trigger="peek")
+        return build_sheet([fr], min(self.peek_width, self.width), trigger="peek")
 
     # ---------- 背景迴圈 ----------
     def _run(self):

@@ -22,7 +22,7 @@ def clip(tmp_path_factory):
 
 
 def test_static_then_motion(clip, tmp_path):
-    w = Watcher(clip, pace=1.0, fps=8, realtime=True, folder=tmp_path / "sheets", keep=3).start()
+    w = Watcher(clip, pace=1.0, fps=8, width=640, height=360, realtime=True, folder=tmp_path / "sheets", keep=3).start()
     sheets = []
     while w._thread.is_alive() or not w._q.empty():   # 放到影片結束
         s = w.next_sheet(timeout=1)
@@ -41,9 +41,21 @@ def test_static_then_motion(clip, tmp_path):
 
 
 def test_pause_clears_folder(clip, tmp_path):
-    w = Watcher(clip, pace=0.5, fps=8, realtime=False, folder=tmp_path / "s").start()
+    w = Watcher(clip, pace=0.5, fps=8, width=640, height=360, realtime=False, folder=tmp_path / "s").start()
     w.next_sheet(timeout=5)
     w.pause()
     assert not list((tmp_path / "s").glob("sheet-*.jpg"))
     assert w.peek() is None
     w.stop()
+
+
+def test_peek_is_sharper_than_sheet(clip):
+    w = Watcher(clip, pace=60, fps=8, realtime=True).start()
+    import time
+    end = time.time() + 5
+    p = None
+    while p is None and time.time() < end:
+        time.sleep(0.2)
+        p = w.peek()
+    w.stop()
+    assert p is not None and p.width == 1280
