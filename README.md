@@ -47,6 +47,7 @@ messages = [{"role": "user", "content": sheet.openai_content("這是剛才的螢
 
 w.peek()          # 不等，拿現在這一刻（快捷鍵用）
 w.flush()         # 不等節奏，把累積的馬上拼出來（偵測到重要事件時）
+w.zoom("右上")    # 放大看：用原始解析度重拍，切出一塊（左半、右下、中間，或 "0.5,0,1,0.5"）
 w.still_for       # 畫面已經靜止幾秒
 w.index()         # 資料夾的文字目錄，給模型挑要看哪張
 w.set_pace("live")

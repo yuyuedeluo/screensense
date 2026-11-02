@@ -64,3 +64,15 @@ def test_sheet_build_and_formats():
     assert oa[0]["text"] == "看看" and oa[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     an = s.anthropic_content()
     assert an[0]["source"]["media_type"] == "image/jpeg"
+
+
+def test_zoom_regions():
+    from screensense.zoom import crop, parse_region
+    img = np.zeros((1440, 2560, 3), np.uint8)
+    img[:720, 1280:] = 255                       # 右上角是白的
+    part = crop(img, "右上")
+    assert part.shape == (720, 1280, 3) and part.min() == 255
+    assert parse_region("右上角") == parse_region("右上") == parse_region("top-right")
+    assert parse_region("0.5,0,1,0.5") == (0.5, 0.0, 1.0, 0.5)
+    assert parse_region("亂打") == (0, 0, 1, 1)
+    assert parse_region([0.9, 0.9, 0.91, 0.91]) == (0, 0, 1, 1)   # 太小就退回全螢幕

@@ -139,3 +139,28 @@ def open_source(source: str = "desktop", fps: float = 8, width: int = 640, heigh
             return MSSSource(fps, width, height)
         raise CaptureError("讀影片檔需要 ffmpeg")
     return FFmpegSource(source, fps, width, height, backend, realtime)
+
+
+def grab_full() -> np.ndarray | None:
+    """拍一張原始解析度的全螢幕（放大看局部用）。Windows 用 ffmpeg gdigrab，其他系統用 mss；都不行就回傳 None。"""
+    if sys.platform == "win32" and shutil.which("ffmpeg"):
+        try:
+            from PIL import Image
+            import io
+            flags = subprocess.CREATE_NO_WINDOW
+            r = subprocess.run([_ffmpeg(), "-hide_banner", "-loglevel", "error", "-nostdin",
+                                "-f", "gdigrab", "-i", "desktop", "-frames:v", "1",
+                                "-f", "image2pipe", "-vcodec", "bmp", "-"],
+                               capture_output=True, timeout=10, creationflags=flags)
+            if r.returncode == 0 and r.stdout:
+                return np.asarray(Image.open(io.BytesIO(r.stdout)).convert("RGB"))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+    try:
+        import mss
+        from PIL import Image
+        with mss.mss() as sct:
+            shot = sct.grab(sct.monitors[0])
+            return np.asarray(Image.frombytes("RGB", shot.size, shot.bgra, "raw", "BGRX"))
+    except Exception:
+        return None

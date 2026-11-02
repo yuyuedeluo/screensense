@@ -22,9 +22,10 @@ from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 
-from .capture import CaptureError, open_source
+from .capture import CaptureError, grab_full, open_source
 from .detect import ChangeDetector
 from .sheet import Frame, Sheet, build_sheet
+from .zoom import crop
 
 PACES = {"calm": 30.0, "normal": 15.0, "dense": 8.0, "live": 4.0}
 
@@ -125,6 +126,26 @@ class Watcher:
         if fr is None:
             return None
         return build_sheet([fr], min(self.peek_width, self.width), trigger="peek")
+
+    def zoom(self, region=None, max_width: int = 1600) -> Sheet | None:
+        """放大看：用原始解析度重拍現在的畫面，切出 region 那一塊。
+        拍不到原始解析度時，退回用最近一張（解析度比較低）。黑名單視窗、閉眼時回傳 None。"""
+        if self._paused.is_set():
+            return None
+        title = self.title_fn() if self.title_fn else None
+        if self.allow_fn and not self.allow_fn(title):
+            return None
+        full = grab_full() if self.source == "desktop" else None
+        if full is None:
+            with self._lock:
+                fr = self._latest
+            if fr is None:
+                return None
+            full = fr.image
+        part = crop(full, region)
+        h, w, _ = part.shape
+        frame = Frame(part, time.time(), 0.0, "zoom", title)
+        return build_sheet([frame], min(max_width, w), quality=88, trigger="zoom")
 
     # ---------- 背景迴圈 ----------
     def _run(self):

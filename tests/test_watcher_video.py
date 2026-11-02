@@ -59,3 +59,15 @@ def test_peek_is_sharper_than_sheet(clip):
         p = w.peek()
     w.stop()
     assert p is not None and p.width == 1280
+
+
+def test_zoom_falls_back_to_latest(clip):
+    import time
+    w = Watcher(clip, pace=60, fps=8, realtime=True).start()
+    end = time.time() + 5
+    z = None
+    while z is None and time.time() < end:
+        time.sleep(0.2)
+        z = w.zoom("右半")
+    w.stop()
+    assert z is not None and z.trigger == "zoom" and z.width == 640   # 影片 1280 寬，右半是 640
