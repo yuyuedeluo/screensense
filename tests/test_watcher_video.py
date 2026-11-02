@@ -96,3 +96,37 @@ def test_sample_every_keeps_subtitle_changes(subtitle_clip):
         return n
     without, with_sampling = kept(None), kept(2)
     assert with_sampling > without
+
+
+def test_native_buffer_zoom_at_moment(tmp_path):
+    """影片每秒換一種顏色；回到某一刻放大，拿到的應該是那一刻的顏色，不是現在的。"""
+    import time
+    clip = tmp_path / "colors.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi",
+                    "-i", "color=c=red:s=1280x720:d=2:r=8", "-f", "lavfi", "-i", "color=c=blue:s=1280x720:d=4:r=8",
+                    "-filter_complex", "[0][1]concat=n=2:v=1[v]", "-map", "[v]", str(clip)], check=True)
+    w = Watcher(str(clip), pace=60, fps=8, width=640, height=360, realtime=True, native_seconds=10).start()
+    time.sleep(1.0)
+    red_moment = time.time()
+    time.sleep(2.5)                       # 現在已經是藍色了
+    z_then = w.zoom("左上", at=red_moment)
+    z_now = w.zoom("左上")
+    w.stop()
+    assert z_then.frames[0].image.shape[1] == 640   # 原畫質 1280 的左上 = 640 寬（不是 640 擷取的 320）
+    r, g, b = z_then.frames[0].image.reshape(-1, 3).mean(axis=0)
+    assert r > 150 and b < 100, (r, g, b)  # 那一刻是紅的
+    r2, _, b2 = z_now.frames[0].image.reshape(-1, 3).mean(axis=0)
+    assert b2 > 150 and r2 < 100           # 現在是藍的（退回最近一張）
+
+
+def test_pause_stops_native_buffer(tmp_path):
+    import time
+    clip = tmp_path / "c.mp4"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "testsrc2=s=640x360:d=8:r=8", str(clip)], check=True)
+    w = Watcher(str(clip), pace=60, fps=8, width=640, height=360, native_seconds=10).start()
+    time.sleep(2)
+    assert len(w.native) > 0
+    w.pause()
+    time.sleep(1.5)
+    assert len(w.native) == 0             # 閉眼後不再累積
+    w.stop()

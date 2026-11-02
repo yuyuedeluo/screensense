@@ -5,9 +5,10 @@
 from .capture import CaptureError, FFmpegSource, MSSSource, open_source
 from .detect import ChangeDetector, change_score, to_grid
 from .sheet import Frame, Sheet, build_sheet, grid_for
+from .native import NativeBuffer
 from .watcher import PACES, Watcher
 from .zoom import REGIONS, crop, parse_region
 
 __all__ = ["Watcher", "PACES", "Sheet", "Frame", "build_sheet", "grid_for", "ChangeDetector",
            "change_score", "to_grid", "open_source", "FFmpegSource", "MSSSource", "CaptureError", "REGIONS", "crop", "parse_region"]
-__version__ = "0.4.0"
+__version__ = "0.5.0"

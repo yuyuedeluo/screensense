@@ -26,6 +26,7 @@ from .capture import CaptureError, grab_full, open_source
 from .detect import ChangeDetector
 from .sheet import Frame, Sheet, build_sheet
 from .focus import MotionMap
+from .native import NativeBuffer
 from .zoom import crop
 
 PACES = {"calm": 30.0, "normal": 15.0, "dense": 8.0, "live": 4.0}
@@ -41,7 +42,7 @@ class Watcher:
                  folder: str | Path | None = None, keep: int = 20,
                  on_sheet: Callable[[Sheet], None] | None = None,
                  detector_kwargs: dict | None = None, focus: str | None = None,
-                 sample_every: float | None = None):
+                 sample_every: float | None = None, native_seconds: float | None = None):
         self.source, self.fps, self.width, self.height = source, fps, width, height
         self.backend, self.realtime = backend, realtime
         self.min_frames, self.max_frames, self.sheet_width = min_frames, max_frames, sheet_width
@@ -56,6 +57,9 @@ class Watcher:
         self.focus = focus                    # "motion"：拼板只裁出在動的那一塊（看影片、比賽時）
         # 定時取樣：畫面有在動（哪怕只是換字幕），每隔這麼多秒至少留一格，讓拼板看得出「過程」
         self.sample_every = sample_every
+        # 最近幾秒的原畫質（每秒 2 張）：放大看時回到「那一刻」
+        self.native = NativeBuffer(source, native_seconds, backend=None if backend in (None, "mss") else backend) \
+            if native_seconds else None
         self._last_kept = 0.0
         self._since_kept = 0.0                # 上次留下之後，累積變了多少
         self.motion = MotionMap()
@@ -79,10 +83,14 @@ class Watcher:
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="screensense", daemon=True)
         self._thread.start()
+        if self.native is not None:
+            self.native.start()
         return self
 
     def stop(self):
         self._stop.set()
+        if self.native is not None:
+            self.native.stop()
         if self._src:
             try:
                 self._src.close(final=True)
@@ -98,11 +106,15 @@ class Watcher:
             self._buf.clear()
             self._latest = None
         self.detector.reset()
+        if self.native is not None:
+            self.native.stop()            # 閉眼：原畫質那條也停掉，不只是清空
         if clear:
             self.clear_folder()
 
     def resume(self):
         self._paused.clear()
+        if self.native is not None and self._thread is not None:
+            self.native.start()
 
     @property
     def paused(self) -> bool:
@@ -135,15 +147,22 @@ class Watcher:
             return None
         return build_sheet([fr], min(self.peek_width, self.width), trigger="peek")
 
-    def zoom(self, region=None, max_width: int = 1600) -> Sheet | None:
-        """放大看：用原始解析度重拍現在的畫面，切出 region 那一塊。
-        拍不到原始解析度時，退回用最近一張（解析度比較低）。黑名單視窗、閉眼時回傳 None。"""
+    def zoom(self, region=None, max_width: int = 1600, at: float | None = None) -> Sheet | None:
+        """放大看：切出 region 那一塊，用原始解析度給她。
+        給 at（時間戳）就回到那一刻（從最近幾秒的原畫質緩衝裡找）；沒有就重拍現在。
+        都拍不到時，退回用最近一張（解析度比較低）。黑名單視窗、閉眼時回傳 None。"""
         if self._paused.is_set():
             return None
         title = self.title_fn() if self.title_fn else None
         if self.allow_fn and not self.allow_fn(title):
             return None
-        full = grab_full() if self.source == "desktop" else None
+        full, when = None, time.time()
+        if at is not None and self.native is not None:
+            full = self.native.at(at)
+            if full is not None:
+                when = at
+        if full is None:
+            full = grab_full() if self.source == "desktop" else None
         if full is None:
             with self._lock:
                 fr = self._latest
@@ -152,7 +171,7 @@ class Watcher:
             full = fr.image
         part = crop(full, region)
         h, w, _ = part.shape
-        frame = Frame(part, time.time(), 0.0, "zoom", title)
+        frame = Frame(part, when, 0.0, "zoom", title)
         return build_sheet([frame], min(max_width, w), quality=88, trigger="zoom")
 
     # ---------- 背景迴圈 ----------
@@ -169,6 +188,8 @@ class Watcher:
                 if self.allow_fn and not self.allow_fn(title):
                     with self._lock:
                         self._latest = None     # 不該看的畫面，連 peek 都拿不到
+                    if self.native is not None:
+                        self.native.clear()     # 原畫質緩衝裡的也一起丟掉
                     self.detector.reset()
                     continue
                 d = self.detector.feed(img, t)
