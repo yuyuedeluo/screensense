@@ -10,4 +10,4 @@ from .zoom import REGIONS, crop, parse_region
 
 __all__ = ["Watcher", "PACES", "Sheet", "Frame", "build_sheet", "grid_for", "ChangeDetector",
            "change_score", "to_grid", "open_source", "FFmpegSource", "MSSSource", "CaptureError", "REGIONS", "crop", "parse_region"]
-__version__ = "0.3.0"
+__version__ = "0.4.0"

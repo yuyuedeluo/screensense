@@ -71,3 +71,28 @@ def test_zoom_falls_back_to_latest(clip):
         z = w.zoom("右半")
     w.stop()
     assert z is not None and z.trigger == "zoom" and z.width == 640   # 影片 1280 寬，右半是 640
+
+
+@pytest.fixture(scope="module")
+def subtitle_clip(tmp_path_factory):
+    """幾乎靜止的畫面，只有一小行字一直在換（像字幕）。"""
+    out = tmp_path_factory.mktemp("s") / "sub.mp4"
+    subprocess.run([
+        "ffmpeg", "-loglevel", "error", "-y", "-f", "lavfi", "-i", "color=c=0x303030:s=640x360:d=12:r=8",
+        "-vf", "drawbox=x=200:y=300:w=240:h=30:color=white@1:t=fill:enable='lt(mod(t,2),1)'",
+        str(out)], check=True)
+    return str(out)
+
+
+def test_sample_every_keeps_subtitle_changes(subtitle_clip):
+    def kept(sample):
+        w = Watcher(subtitle_clip, pace=100, fps=8, width=640, height=360, realtime=True,
+                    max_frames=50, sample_every=sample).start()
+        w._thread.join(timeout=30)
+        n = 0
+        while (s := w.next_sheet(timeout=0.5)) is not None:
+            n += len(s.frames)
+        w.stop()
+        return n
+    without, with_sampling = kept(None), kept(2)
+    assert with_sampling > without

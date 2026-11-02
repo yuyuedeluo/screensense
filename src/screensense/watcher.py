@@ -40,7 +40,8 @@ class Watcher:
                  allow_fn: Callable[[str | None], bool] | None = None,
                  folder: str | Path | None = None, keep: int = 20,
                  on_sheet: Callable[[Sheet], None] | None = None,
-                 detector_kwargs: dict | None = None, focus: str | None = None):
+                 detector_kwargs: dict | None = None, focus: str | None = None,
+                 sample_every: float | None = None):
         self.source, self.fps, self.width, self.height = source, fps, width, height
         self.backend, self.realtime = backend, realtime
         self.min_frames, self.max_frames, self.sheet_width = min_frames, max_frames, sheet_width
@@ -53,6 +54,10 @@ class Watcher:
         self.interval = PACES[pace] if isinstance(pace, str) else float(pace)
         self.detector = ChangeDetector(fps, **(detector_kwargs or {}))
         self.focus = focus                    # "motion"：拼板只裁出在動的那一塊（看影片、比賽時）
+        # 定時取樣：畫面有在動（哪怕只是換字幕），每隔這麼多秒至少留一格，讓拼板看得出「過程」
+        self.sample_every = sample_every
+        self._last_kept = 0.0
+        self._since_kept = 0.0                # 上次留下之後，累積變了多少
         self.motion = MotionMap()
 
         self._buf: deque[Frame] = deque()
@@ -168,6 +173,12 @@ class Watcher:
                     continue
                 d = self.detector.feed(img, t)
                 self.motion.feed(img)
+                self._since_kept += d.score
+                if (not d.keep and self.sample_every and t - self._last_kept >= self.sample_every
+                        and self._since_kept > self.detector.noise_floor):
+                    d.keep, d.reason = True, "sample"   # 這段時間有在動（例如換了字幕），留一格
+                if d.keep:
+                    self._last_kept, self._since_kept = t, 0.0
                 fr = Frame(img.copy(), t, d.score, d.reason, title)
                 with self._lock:
                     self._latest = fr
