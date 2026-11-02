@@ -25,6 +25,7 @@ from pathlib import Path
 from .capture import CaptureError, grab_full, open_source
 from .detect import ChangeDetector
 from .sheet import Frame, Sheet, build_sheet
+from .focus import MotionMap
 from .zoom import crop
 
 PACES = {"calm": 30.0, "normal": 15.0, "dense": 8.0, "live": 4.0}
@@ -39,7 +40,7 @@ class Watcher:
                  allow_fn: Callable[[str | None], bool] | None = None,
                  folder: str | Path | None = None, keep: int = 20,
                  on_sheet: Callable[[Sheet], None] | None = None,
-                 detector_kwargs: dict | None = None):
+                 detector_kwargs: dict | None = None, focus: str | None = None):
         self.source, self.fps, self.width, self.height = source, fps, width, height
         self.backend, self.realtime = backend, realtime
         self.min_frames, self.max_frames, self.sheet_width = min_frames, max_frames, sheet_width
@@ -51,6 +52,8 @@ class Watcher:
         self.keep = keep
         self.interval = PACES[pace] if isinstance(pace, str) else float(pace)
         self.detector = ChangeDetector(fps, **(detector_kwargs or {}))
+        self.focus = focus                    # "motion"：拼板只裁出在動的那一塊（看影片、比賽時）
+        self.motion = MotionMap()
 
         self._buf: deque[Frame] = deque()
         self._latest: Frame | None = None
@@ -164,6 +167,7 @@ class Watcher:
                     self.detector.reset()
                     continue
                 d = self.detector.feed(img, t)
+                self.motion.feed(img)
                 fr = Frame(img.copy(), t, d.score, d.reason, title)
                 with self._lock:
                     self._latest = fr
@@ -199,7 +203,12 @@ class Watcher:
                 self._buf.clear()
                 trigger = "full" if (full and not force) else trigger
             self._last_emit = now
+            box = self.motion.bbox() if self.focus == "motion" else None
+            self.motion.reset()
+        if box:
+            frames = [Frame(crop(f.image, box), f.t, f.score, f.reason, f.title) for f in frames]
         sheet = build_sheet(frames, self.sheet_width, trigger=trigger)
+        sheet.focus = box
         if self.folder:
             self._save(sheet)
         if self.on_sheet:

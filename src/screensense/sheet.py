@@ -30,6 +30,7 @@ class Sheet:
     height: int
     frames: list[Frame] = field(default_factory=list)
     trigger: str = ""                 # 為什麼現在出圖："pace"、"full"、"flush"、"peek"
+    focus: tuple | None = None        # 有裁成「在動的那一塊」時，記下範圍 (x0, y0, x1, y1)
 
     @property
     def start(self) -> float:
@@ -51,7 +52,8 @@ class Sheet:
         titles = [f.title for f in self.frames if f.title]
         where = f"｜{titles[-1]}" if titles else ""
         span = t0 if t0 == t1 else f"{t0}～{t1}"
-        return f"{span}，{len(self.frames)} 格，變化 {self.change:.0f}{where}"
+        crop = "，只截畫面在動的那一塊" if self.focus else ""
+        return f"{span}，{len(self.frames)} 格，變化 {self.change:.0f}{crop}{where}"
 
     def data_url(self) -> str:
         return "data:image/jpeg;base64," + base64.b64encode(self.jpeg).decode()

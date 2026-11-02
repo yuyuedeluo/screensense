@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "screensense"
-version = "0.2.0"
+version = "0.3.0"
 description = "便宜的準即時螢幕觀看：畫面有變化才拼成一張圖交給視覺模型"
 readme = "README.md"
 requires-python = ">=3.10"
