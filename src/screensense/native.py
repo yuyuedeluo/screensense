@@ -48,6 +48,8 @@ class NativeBuffer:
         if self.source == "desktop" and sys.platform != "win32":
             self.error = "原畫質緩衝只支援 Windows 桌面（或影片檔）"
             return self
+        if self._thread is not None and self._thread.is_alive() and not self._stop.is_set():
+            return self                 # 已經在跑
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="screensense-native", daemon=True)
         self._thread.start()

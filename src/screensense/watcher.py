@@ -53,13 +53,15 @@ class Watcher:
         self.folder = Path(folder) if folder else None
         self.keep = keep
         self.interval = PACES[pace] if isinstance(pace, str) else float(pace)
-        self.detector = ChangeDetector(fps, **(detector_kwargs or {}))
+        self._detector_kwargs = dict(detector_kwargs or {})
+        self.detector = ChangeDetector(fps, **self._detector_kwargs)
         self.focus = focus                    # "motion"：拼板只裁出在動的那一塊（看影片、比賽時）
         # 定時取樣：畫面有在動（哪怕只是換字幕），每隔這麼多秒至少留一格，讓拼板看得出「過程」
         self.sample_every = sample_every
         # 最近幾秒的原畫質（每秒 2 張）：放大看時回到「那一刻」
         self.native = NativeBuffer(source, native_seconds, backend=None if backend in (None, "mss") else backend) \
             if native_seconds else None
+        self._native_on = True
         self._last_kept = 0.0
         self._since_kept = 0.0                # 上次留下之後，累積變了多少
         self.motion = MotionMap()
@@ -72,6 +74,7 @@ class Watcher:
         self._lock = threading.Lock()
         self._paused = threading.Event()
         self._stop = threading.Event()
+        self._restart = threading.Event()     # set_fps：換速度時重開擷取
         self._thread: threading.Thread | None = None
         self._src = None
         self.error: str | None = None
@@ -83,7 +86,7 @@ class Watcher:
         self._stop.clear()
         self._thread = threading.Thread(target=self._run, name="screensense", daemon=True)
         self._thread.start()
-        if self.native is not None:
+        if self.native is not None and self._native_on:
             self.native.start()
         return self
 
@@ -113,12 +116,30 @@ class Watcher:
 
     def resume(self):
         self._paused.clear()
-        if self.native is not None and self._thread is not None:
+        if self.native is not None and self._thread is not None and self._native_on:
             self.native.start()
 
     @property
     def paused(self) -> bool:
         return self._paused.is_set()
+
+    def set_fps(self, fps: float):
+        """改每秒判斷幾張（例如看影片 8 張、平常 2 張）。擷取會重開，畫面斷不到一秒。"""
+        fps = float(fps)
+        if fps <= 0 or fps == self.fps:
+            return
+        self.fps = fps
+        self._restart.set()
+
+    def set_native(self, on: bool):
+        """原畫質緩衝要不要開（只有需要回頭放大時才開，省 CPU）。"""
+        self._native_on = bool(on)
+        if self.native is None:
+            return
+        if on and not self._paused.is_set() and self._thread is not None:
+            self.native.start()
+        elif not on:
+            self.native.stop()
 
     def set_pace(self, pace: str | float):
         self.interval = PACES[pace] if isinstance(pace, str) else float(pace)
@@ -176,47 +197,58 @@ class Watcher:
 
     # ---------- 背景迴圈 ----------
     def _run(self):
+        ended = False
         try:
-            self._src = open_source(self.source, self.fps, self.width, self.height,
-                                    self.backend, self.realtime)
-            for img, t in self._src.frames():
-                if self._stop.is_set():
+            while not self._stop.is_set():
+                self._restart.clear()
+                self.detector = ChangeDetector(self.fps, **self._detector_kwargs)
+                self._src = open_source(self.source, self.fps, self.width, self.height,
+                                        self.backend, self.realtime)
+                try:
+                    ended = True
+                    for img, t in self._src.frames():
+                        if self._stop.is_set() or self._restart.is_set():
+                            ended = False
+                            break
+                        if self._paused.is_set():
+                            continue
+                        self._feed(img, t)
+                finally:
+                    self._src.close()
+                if ended or not self._restart.is_set():
                     break
-                if self._paused.is_set():
-                    continue
-                title = self.title_fn() if self.title_fn else None
-                if self.allow_fn and not self.allow_fn(title):
-                    with self._lock:
-                        self._latest = None     # 不該看的畫面，連 peek 都拿不到
-                    if self.native is not None:
-                        self.native.clear()     # 原畫質緩衝裡的也一起丟掉
-                    self.detector.reset()
-                    continue
-                d = self.detector.feed(img, t)
-                self.motion.feed(img)
-                self._since_kept += d.score
-                if (not d.keep and self.sample_every and t - self._last_kept >= self.sample_every
-                        and self._since_kept > self.detector.noise_floor):
-                    d.keep, d.reason = True, "sample"   # 這段時間有在動（例如換了字幕），留一格
-                if d.keep:
-                    self._last_kept, self._since_kept = t, 0.0
-                fr = Frame(img.copy(), t, d.score, d.reason, title)
-                with self._lock:
-                    self._latest = fr
-                    if d.keep:
-                        self._buf.append(fr)
-                        if d.reason != "first":
-                            self._last_change = t
-                        while len(self._buf) > self.max_frames:
-                            self._buf.popleft()   # 太多就丟最舊的，拼板只放最近的
-                self._emit("pace")
-            if self._buf and not self._stop.is_set():   # 影片放完：剩下的也拼出來
+            if ended and self._buf and not self._stop.is_set():   # 影片放完：剩下的也拼出來
                 self._emit("end", force=True, enqueue=True)
         except CaptureError as e:
             self.error = str(e)
-        finally:
-            if self._src:
-                self._src.close()
+
+    def _feed(self, img, t: float):
+        title = self.title_fn() if self.title_fn else None
+        if self.allow_fn and not self.allow_fn(title):
+            with self._lock:
+                self._latest = None     # 不該看的畫面，連 peek 都拿不到
+            if self.native is not None:
+                self.native.clear()     # 原畫質緩衝裡的也一起丟掉
+            self.detector.reset()
+            return
+        d = self.detector.feed(img, t)
+        self.motion.feed(img)
+        self._since_kept += d.score
+        if (not d.keep and self.sample_every and t - self._last_kept >= self.sample_every
+                and self._since_kept > self.detector.noise_floor):
+            d.keep, d.reason = True, "sample"   # 這段時間有在動（例如換了字幕），留一格
+        if d.keep:
+            self._last_kept, self._since_kept = t, 0.0
+        fr = Frame(img.copy(), t, d.score, d.reason, title)
+        with self._lock:
+            self._latest = fr
+            if d.keep:
+                self._buf.append(fr)
+                if d.reason != "first":
+                    self._last_change = t
+                while len(self._buf) > self.max_frames:
+                    self._buf.popleft()   # 太多就丟最舊的，拼板只放最近的
+        self._emit("pace")
 
     def _emit(self, trigger: str, force: bool = False, enqueue: bool | None = None) -> Sheet | None:
         now = time.time()
