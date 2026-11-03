@@ -39,7 +39,13 @@ def is_fullscreen() -> bool:
     info.cbSize = ctypes.sizeof(MONITORINFO)
     user32.GetMonitorInfoW(mon, ctypes.byref(info))
     m = info.rcMonitor
-    return (rect.left <= m.left and rect.top <= m.top and rect.right >= m.right and rect.bottom >= m.bottom)
+    covers = rect.left <= m.left and rect.top <= m.top and rect.right >= m.right and rect.bottom >= m.bottom
+    if not covers:
+        return False
+    # 最大化的一般視窗（有標題列）不算全螢幕；遊戲、影片全螢幕、F11 都沒有標題列
+    GWL_STYLE, WS_CAPTION = -16, 0x00C00000
+    style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+    return not (style & WS_CAPTION == WS_CAPTION)
 
 
 def title_blocker(words: list[str], own: list[str] | None = None):
